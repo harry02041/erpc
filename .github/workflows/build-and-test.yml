@@ -1,0 +1,198 @@
+name: Build and Test eRPC
+
+# 触发条件
+on:
+  push:
+    branches: [ main, develop, 'claude/**' ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:  # 允许手动触发
+
+# 并发控制
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Linux GCC 编译和测试
+  build-linux-gcc:
+    name: Linux (GCC)
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+
+    - name: 安装依赖
+      run: |
+        chmod +x install_dependencies.sh
+        ./install_dependencies.sh
+
+    - name: 编译项目
+      run: |
+        make clean
+        CC=gcc CXX=g++ make all
+
+    - name: 运行单元测试
+      run: |
+        python3 test/run_unit_tests.py gcc
+
+    - name: 运行代码生成器测试
+      run: |
+        pytest erpcgen/test/
+
+    - name: 上传构建产物
+      uses: actions/upload-artifact@v4
+      with:
+        name: erpcgen-linux-gcc
+        path: Release/Linux/erpcgen/erpcgen
+        retention-days: 7
+
+  # Linux Clang 编译和测试
+  build-linux-clang:
+    name: Linux (Clang)
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+
+    - name: 安装依赖
+      run: |
+        chmod +x install_dependencies.sh
+        ./install_dependencies.sh clang
+
+    - name: 编译项目
+      run: |
+        make clean
+        CC=clang CXX=clang++ make all
+
+    - name: 运行单元测试
+      run: |
+        python3 test/run_unit_tests.py clang
+
+    - name: 运行代码生成器测试
+      run: |
+        pytest erpcgen/test/
+
+  # macOS 编译和测试
+  build-macos:
+    name: macOS (Clang)
+    runs-on: macos-latest
+
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+
+    - name: 安装依赖
+      run: |
+        brew update
+        brew install python3 bison flex
+        pip3 install pytest pyyaml tornado
+
+    - name: 编译项目
+      run: |
+        make clean
+        make all
+
+    - name: 运行单元测试
+      run: |
+        python3 test/run_unit_tests.py
+
+    - name: 上传构建产物
+      uses: actions/upload-artifact@v4
+      with:
+        name: erpcgen-macos
+        path: Release/Darwin/erpcgen/erpcgen
+        retention-days: 7
+
+  # Windows MinGW 编译和测试
+  build-windows-mingw:
+    name: Windows (MinGW)
+    runs-on: windows-latest
+
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+
+    - name: 安装依赖
+      run: |
+        powershell.exe .\install_dependencies.ps1
+
+    - name: 编译项目
+      run: |
+        .\mingw64\bin\mingw32-make all
+
+    - name: 运行单元测试
+      run: |
+        .\mingw64\opt\bin\python3.exe .\test\run_unit_tests.py -m"..\\..\\mingw64\\bin\\mingw32-make"
+
+  # Docker 容器化测试
+  build-docker:
+    name: Docker Build Test
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+
+    - name: 构建 Docker 镜像
+      run: |
+        docker build -t erpc-test .
+
+    - name: 运行容器化测试
+      run: |
+        docker run --rm erpc-test bash -c "make clean && make all && python3 test/run_unit_tests.py gcc"
+
+  # 代码覆盖率分析（可选）
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-22.04
+    if: github.event_name == 'pull_request'
+
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+
+    - name: 安装依赖
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc g++ make bison flex python3 python3-pip gcov lcov
+        pip3 install pytest pyyaml
+
+    - name: 编译（带覆盖率）
+      run: |
+        make clean
+        CFLAGS="--coverage" CXXFLAGS="--coverage" make all
+
+    - name: 运行测试
+      run: |
+        python3 test/run_unit_tests.py gcc || true
+
+    - name: 生成覆盖率报告
+      run: |
+        lcov --capture --directory . --output-file coverage.info || true
+        lcov --remove coverage.info '/usr/*' '*/test/*' --output-file coverage.info || true
+
+    - name: 上传到 Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        files: ./coverage.info
+        fail_ci_if_error: false
+
+  # 测试结果汇总
+  test-summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs: [build-linux-gcc, build-linux-clang, build-macos, build-windows-mingw, build-docker]
+    if: always()
+
+    steps:
+    - name: 检查测试结果
+      run: |
+        echo "所有测试任务已完成"
+        echo "Linux GCC: ${{ needs.build-linux-gcc.result }}"
+        echo "Linux Clang: ${{ needs.build-linux-clang.result }}"
+        echo "macOS: ${{ needs.build-macos.result }}"
+        echo "Windows MinGW: ${{ needs.build-windows-mingw.result }}"
+        echo "Docker: ${{ needs.build-docker.result }}"

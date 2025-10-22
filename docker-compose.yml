@@ -1,0 +1,92 @@
+# Docker Compose 配置文件 - eRPC 云端测试环境
+version: '3.8'
+
+services:
+  # 基础测试环境 (GCC)
+  erpc-test-gcc:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: erpc-test-gcc
+    volumes:
+      - .:/erpc
+      - build-cache-gcc:/erpc/Release
+    environment:
+      - CC=gcc
+      - CXX=g++
+    command: bash -c "make clean && make all && python3 test/run_unit_tests.py gcc"
+    network_mode: host
+
+  # Clang 测试环境
+  erpc-test-clang:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: erpc-test-clang
+    volumes:
+      - .:/erpc
+      - build-cache-clang:/erpc/Release
+    environment:
+      - CC=clang
+      - CXX=clang++
+    command: bash -c "make clean && make all && python3 test/run_unit_tests.py clang"
+    network_mode: host
+
+  # 仅编译（不运行测试）
+  erpc-build-only:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: erpc-build
+    volumes:
+      - .:/erpc
+      - build-cache:/erpc/Release
+    command: make all
+
+  # 交互式开发环境
+  erpc-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: erpc-dev
+    volumes:
+      - .:/erpc
+    working_dir: /erpc
+    stdin_open: true
+    tty: true
+    command: /bin/bash
+
+  # Python 测试环境
+  erpc-pytest:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: erpc-pytest
+    volumes:
+      - .:/erpc
+    command: pytest erpcgen/test/ -v
+
+volumes:
+  build-cache-gcc:
+  build-cache-clang:
+  build-cache:
+
+# 使用方法：
+#
+# 1. 运行所有测试（GCC + Clang）：
+#    docker-compose up erpc-test-gcc erpc-test-clang
+#
+# 2. 仅编译项目：
+#    docker-compose up erpc-build-only
+#
+# 3. 运行特定测试：
+#    docker-compose run erpc-test-gcc python3 test/run_unit_tests.py gcc
+#
+# 4. 进入交互式开发环境：
+#    docker-compose run erpc-dev
+#
+# 5. 运行 Python 代码生成器测试：
+#    docker-compose up erpc-pytest
+#
+# 6. 清理所有容器和缓存：
+#    docker-compose down -v
