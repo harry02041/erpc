@@ -1,0 +1,206 @@
+# Docker Compose 配置 - Cadence DSP 开发环境
+# ARM GCC + Cadence Xtensa DSP 异构编译环境
+
+version: '3.8'
+
+services:
+  # ============================================
+  # DSP 开发环境（需要挂载 Cadence 工具链）
+  # ============================================
+  erpc-dsp-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.cadence-dsp
+    container_name: erpc-dsp-dev
+    hostname: erpc-dsp-builder
+
+    # 挂载点
+    volumes:
+      # 项目代码
+      - .:/workspace
+
+      # Cadence 工具链（需要修改为实际路径）
+      # - /opt/cadence/xtensa:/opt/toolchains/xtensa:ro
+
+      # 许可证文件（如果使用文件许可证）
+      # - /path/to/license.dat:/opt/licenses/license.dat:ro
+
+      # 构建输出缓存
+      - dsp-build-cache:/workspace/Release
+
+    # 环境变量配置
+    environment:
+      # Cadence 工具链配置
+      - XTENSA_TOOLS_ROOT=/opt/toolchains/xtensa
+      - XTENSA_CORE=${XTENSA_CORE:-default_core}
+
+      # 许可证配置（二选一）
+      # 选项1: 网络许可证服务器
+      - LM_LICENSE_FILE=${LM_LICENSE_FILE:-27000@license-server}
+
+      # 选项2: 文件许可证（取消注释）
+      # - LM_LICENSE_FILE=/opt/licenses/license.dat
+
+      # ARM 工具链
+      - ARM_TOOLCHAIN_ROOT=/usr
+
+      # 编译器选择
+      - CC=gcc
+      - CXX=g++
+
+      # eRPC 配置
+      - ERPC_ROOT=/workspace
+
+    # 网络配置（需要访问许可证服务器）
+    network_mode: host
+    # 或使用桥接模式并配置 DNS
+    # networks:
+    #   - dsp-net
+    # extra_hosts:
+    #   - "license-server:192.168.1.100"
+
+    # 工作目录
+    working_dir: /workspace
+
+    # 交互式终端
+    stdin_open: true
+    tty: true
+
+    # 启动命令
+    command: /bin/bash
+
+
+  # ============================================
+  # DSP 编译环境（仅编译，不含测试）
+  # ============================================
+  erpc-dsp-build:
+    build:
+      context: .
+      dockerfile: Dockerfile.cadence-dsp
+    container_name: erpc-dsp-build
+
+    volumes:
+      - .:/workspace
+      # Cadence 工具链挂载
+      # - /opt/cadence/xtensa:/opt/toolchains/xtensa:ro
+      - dsp-build-cache:/workspace/Release
+
+    environment:
+      - XTENSA_TOOLS_ROOT=/opt/toolchains/xtensa
+      - XTENSA_CORE=${XTENSA_CORE}
+      - LM_LICENSE_FILE=${LM_LICENSE_FILE}
+
+    working_dir: /workspace
+    network_mode: host
+
+    # 仅编译 eRPC 库
+    command: bash -c "make clean && make all"
+
+
+  # ============================================
+  # ARM GCC 编译环境（不含 DSP 工具链）
+  # ============================================
+  erpc-arm-only:
+    build:
+      context: .
+      dockerfile: Dockerfile.cadence-dsp
+    container_name: erpc-arm-build
+
+    volumes:
+      - .:/workspace
+      - arm-build-cache:/workspace/Release
+
+    environment:
+      - CC=arm-none-eabi-gcc
+      - CXX=arm-none-eabi-g++
+      - AR=arm-none-eabi-ar
+
+    working_dir: /workspace
+
+    command: bash -c "make clean && make all"
+
+
+  # ============================================
+  # 许可证服务器容器（可选）
+  # ============================================
+  # license-server:
+  #   image: flexlm/license-server:latest
+  #   container_name: flexlm-server
+  #   hostname: license-server
+  #   volumes:
+  #     - /path/to/licenses:/licenses:ro
+  #   ports:
+  #     - "27000-27009:27000-27009"
+  #   networks:
+  #     - dsp-net
+  #   restart: unless-stopped
+
+
+# 持久化卷
+volumes:
+  dsp-build-cache:
+    driver: local
+  arm-build-cache:
+    driver: local
+
+
+# 网络配置
+networks:
+  dsp-net:
+    driver: bridge
+
+
+# ============================================
+# 使用方法
+# ============================================
+#
+# 0. 配置环境变量（创建 .env 文件）:
+#    cat > .env <<EOF
+#    XTENSA_CORE=my_dsp_core
+#    LM_LICENSE_FILE=27000@192.168.1.100
+#    EOF
+#
+# 1. 修改 docker-compose.dsp.yml:
+#    - 取消注释并修改 Cadence 工具链挂载路径
+#    - 配置许可证（网络或文件）
+#    - 设置 XTENSA_CORE 环境变量
+#
+# 2. 进入 DSP 开发环境:
+#    docker-compose -f docker-compose.dsp.yml run erpc-dsp-dev
+#
+# 3. 容器内验证工具链:
+#    ./scripts/verify_license.sh
+#    ./scripts/setup_dsp_toolchain.sh
+#
+# 4. 编译项目:
+#    # eRPC 库
+#    make all
+#
+#    # ARM 代码
+#    arm-none-eabi-gcc -c your_arm_code.c
+#
+#    # DSP 代码
+#    xt-xcc --xtensa-core=$XTENSA_CORE -c your_dsp_code.c
+#
+# 5. 仅编译（不进入容器）:
+#    docker-compose -f docker-compose.dsp.yml up erpc-dsp-build
+#
+# 6. 清理环境:
+#    docker-compose -f docker-compose.dsp.yml down -v
+#
+# ============================================
+# 常见问题
+# ============================================
+#
+# Q: 许可证连接失败
+# A: 确保使用 network_mode: host 或正确配置 extra_hosts
+#
+# Q: 工具链找不到
+# A: 检查挂载路径和 XTENSA_TOOLS_ROOT 是否一致
+#
+# Q: Core 配置错误
+# A: 验证 XTENSA_CORE 与工具链中的 config 目录匹配
+#
+# Q: 编译失败
+# A: 运行 ./scripts/verify_license.sh 检查许可证
+#

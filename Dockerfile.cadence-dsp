@@ -1,0 +1,115 @@
+# Dockerfile for eRPC with Cadence DSP Toolchain
+# 支持 ARM GCC + Cadence Xtensa DSP 异构编译环境
+
+FROM ubuntu:22.04
+
+# 设置非交互式安装
+ENV DEBIAN_FRONTEND=noninteractive
+
+# 基础依赖和通用工具
+RUN apt-get update && apt-get install -y \
+    # 基础编译工具
+    build-essential \
+    gcc \
+    g++ \
+    make \
+    cmake \
+    # eRPC 构建依赖
+    bison \
+    flex \
+    git \
+    # Python 环境
+    python3 \
+    python3-pip \
+    # 32位库支持（Cadence 工具可能需要）
+    lib32z1 \
+    lib32ncurses6 \
+    lib32stdc++6 \
+    # 网络和调试工具
+    curl \
+    wget \
+    vim \
+    netcat \
+    gdb \
+    # 许可证管理工具
+    lsb-release \
+    && rm -rf /var/lib/apt/lists/*
+
+# 安装 ARM GCC 交叉编译工具链
+RUN apt-get update && apt-get install -y \
+    gcc-arm-none-eabi \
+    binutils-arm-none-eabi \
+    libnewlib-arm-none-eabi \
+    && rm -rf /var/lib/apt/lists/*
+
+# 安装 Python 测试依赖
+RUN pip3 install --no-cache-dir \
+    pytest \
+    pyyaml \
+    tornado
+
+# 创建工具链目录
+RUN mkdir -p /opt/toolchains /opt/licenses
+
+# ============================================
+# Cadence Xtensa 工具链配置
+# ============================================
+# 注意：Cadence 工具链需要单独安装和授权
+# 这里提供挂载点和环境变量配置
+
+# Cadence 工具链挂载点
+ENV XTENSA_TOOLS_ROOT=/opt/toolchains/xtensa
+ENV XTENSA_CORE=<your_core_name>
+
+# Cadence 许可证服务器配置
+# 格式: port@hostname 或 /path/to/license.dat
+ENV LM_LICENSE_FILE=27000@license-server
+ENV XTENSA_LICENSE_FILE=${LM_LICENSE_FILE}
+
+# 添加 Cadence 工具链到 PATH
+# 如果工具链已安装，取消下面的注释
+# ENV PATH="${XTENSA_TOOLS_ROOT}/bin:${PATH}"
+# ENV LD_LIBRARY_PATH="${XTENSA_TOOLS_ROOT}/lib:${LD_LIBRARY_PATH}"
+
+# ARM 工具链环境变量
+ENV ARM_TOOLCHAIN_ROOT=/usr
+ENV PATH="${ARM_TOOLCHAIN_ROOT}/bin:${PATH}"
+
+# 设置工作目录
+WORKDIR /workspace
+
+# 复制项目文件（如果需要）
+# COPY . .
+
+# 默认启动 shell
+CMD ["/bin/bash"]
+
+# ============================================
+# 使用说明
+# ============================================
+#
+# 1. 构建镜像：
+#    docker build -f Dockerfile.cadence-dsp -t erpc-dsp .
+#
+# 2. 运行容器（挂载 Cadence 工具链）：
+#    docker run -it --rm \
+#      -v /path/to/xtensa/tools:/opt/toolchains/xtensa:ro \
+#      -v $(pwd):/workspace \
+#      -e XTENSA_CORE=your_core \
+#      -e LM_LICENSE_FILE=27000@your-license-server \
+#      erpc-dsp
+#
+# 3. 容器内编译：
+#    # ARM 核心
+#    arm-none-eabi-gcc -c your_arm_code.c
+#
+#    # DSP 核心（需要 Cadence 工具链）
+#    xt-xcc -c your_dsp_code.c
+#
+#    # eRPC 库
+#    make all
+#
+# 4. 许可证服务器配置选项：
+#    a) 网络许可证: -e LM_LICENSE_FILE=27000@server
+#    b) 本地许可证: -v /path/to/license.dat:/opt/licenses/license.dat \
+#                    -e LM_LICENSE_FILE=/opt/licenses/license.dat

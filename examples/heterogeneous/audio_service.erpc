@@ -1,0 +1,215 @@
+/*!
+ * @file audio_service.erpc
+ * @brief eRPC 接口定义 - ARM 和 DSP 之间的音频处理服务
+ *
+ * 使用场景：
+ *   - ARM 核心：运行操作系统，负责控制和数据管理
+ *   - DSP 核心：执行密集的音频信号处理算法
+ *   - 通信方式：RPMsg-Lite 或共享内存
+ *
+ * 编译生成代码：
+ *   erpcgen -o generated/ audio_service.erpc
+ */
+
+// ============================================
+// 数据类型定义
+// ============================================
+
+/*! 音频采样格式 */
+enum AudioFormat {
+    AUDIO_FORMAT_PCM_S16LE = 0,  /*!< 16位有符号小端 PCM */
+    AUDIO_FORMAT_PCM_S24LE = 1,  /*!< 24位有符号小端 PCM */
+    AUDIO_FORMAT_PCM_S32LE = 2   /*!< 32位有符号小端 PCM */
+}
+
+/*! 音频配置参数 */
+struct AudioConfig {
+    uint32 sample_rate     /*!< 采样率 (Hz), 如: 44100, 48000 */
+    AudioFormat format     /*!< 音频格式 */
+    uint8 channels         /*!< 声道数: 1=单声道, 2=立体声 */
+    uint16 frame_size      /*!< 每帧采样数 */
+}
+
+/*! 音频数据缓冲区 */
+struct AudioBuffer {
+    binary data            /*!< 音频数据（二进制） */
+    uint32 size            /*!< 数据大小（字节） */
+    uint64 timestamp       /*!< 时间戳（微秒） */
+}
+
+/*! 音频处理结果 */
+struct ProcessResult {
+    int32 status           /*!< 处理状态: 0=成功, <0=错误码 */
+    uint32 samples_processed  /*!< 已处理的采样数 */
+    float cpu_load         /*!< DSP CPU 负载百分比 */
+}
+
+/*! DSP 统计信息 */
+struct DspStatistics {
+    uint32 total_frames    /*!< 总处理帧数 */
+    uint32 dropped_frames  /*!< 丢弃帧数 */
+    float avg_latency_ms   /*!< 平均延迟（毫秒） */
+    float peak_cpu_load    /*!< 峰值 CPU 负载 */
+}
+
+// ============================================
+// 音频处理服务接口
+// ============================================
+
+/*!
+ * @interface AudioProcessingService
+ * @brief DSP 音频处理服务（运行在 DSP 核心）
+ *
+ * ARM 核心作为客户端调用这些函数，DSP 核心实现服务端。
+ */
+@id(1)
+interface AudioProcessingService {
+
+    /*!
+     * @brief 初始化音频处理
+     * @param config 音频配置参数
+     * @return 0=成功, <0=错误码
+     */
+    @id(1)
+    init(in AudioConfig config) -> int32
+
+    /*!
+     * @brief 处理音频数据（阻塞调用）
+     * @param input 输入音频缓冲区
+     * @param output 输出音频缓冲区（由 DSP 填充）
+     * @return 处理结果
+     */
+    @id(2)
+    process(in AudioBuffer input, out AudioBuffer output) -> ProcessResult
+
+    /*!
+     * @brief 异步处理音频数据（非阻塞）
+     * @param input 输入音频缓冲区
+     * @param callback_id 回调 ID（处理完成后通知）
+     * @return 0=已接受, <0=队列满或错误
+     */
+    @id(3)
+    process_async(in AudioBuffer input, uint32 callback_id) -> int32
+
+    /*!
+     * @brief 应用音频效果
+     * @param effect_type 效果类型: 0=回声, 1=混响, 2=均衡器
+     * @param params 效果参数（二进制，取决于 effect_type）
+     * @return 0=成功, <0=错误码
+     */
+    @id(4)
+    apply_effect(uint8 effect_type, binary params) -> int32
+
+    /*!
+     * @brief 获取 DSP 统计信息
+     * @return 统计信息结构
+     */
+    @id(5)
+    get_statistics() -> DspStatistics
+
+    /*!
+     * @brief 重置 DSP 处理器
+     * @return 0=成功, <0=错误码
+     */
+    @id(6)
+    reset() -> int32
+
+    /*!
+     * @brief 停止音频处理
+     * @return 0=成功, <0=错误码
+     */
+    @id(7)
+    stop() -> int32
+}
+
+// ============================================
+// 回调接口（DSP 调用 ARM）
+// ============================================
+
+/*!
+ * @interface AudioCallback
+ * @brief ARM 核心实现的回调接口
+ *
+ * DSP 核心作为客户端调用这些函数，用于通知 ARM 异步事件。
+ */
+@id(2)
+interface AudioCallback {
+
+    /*!
+     * @brief 异步处理完成回调
+     * @param callback_id 对应的回调 ID
+     * @param result 处理结果
+     */
+    @id(1)
+    onProcessComplete(uint32 callback_id, ProcessResult result) -> void
+
+    /*!
+     * @brief 错误通知
+     * @param error_code 错误码
+     * @param message 错误消息
+     */
+    @id(2)
+    onError(int32 error_code, string message) -> void
+
+    /*!
+     * @brief 缓冲区下溢通知（需要更多数据）
+     */
+    @id(3)
+    onBufferUnderrun() -> void
+}
+
+// ============================================
+// 控制服务接口
+// ============================================
+
+/*!
+ * @interface SystemControl
+ * @brief DSP 系统控制接口
+ */
+@id(3)
+interface SystemControl {
+
+    /*!
+     * @brief 获取 DSP 核心版本信息
+     * @param version 版本字符串（输出）
+     * @return 0=成功
+     */
+    @id(1)
+    get_version(out string version) -> int32
+
+    /*!
+     * @brief 设置 DSP 时钟频率
+     * @param freq_mhz 时钟频率（MHz）
+     * @return 实际设置的频率
+     */
+    @id(2)
+    set_clock_frequency(uint32 freq_mhz) -> uint32
+
+    /*!
+     * @brief 进入低功耗模式
+     * @param mode 模式: 0=浅度睡眠, 1=深度睡眠
+     * @return 0=成功
+     */
+    @id(3)
+    enter_low_power(uint8 mode) -> int32
+
+    /*!
+     * @brief 唤醒 DSP
+     * @return 0=成功
+     */
+    @id(4)
+    wakeup() -> int32
+}
+
+// ============================================
+// 程序定义（可选，用于组合多个接口）
+// ============================================
+
+/*!
+ * @program AudioDspProgram
+ * @brief 完整的音频 DSP RPC 程序
+ */
+program AudioDspProgram {
+    AudioProcessingService(1)   /*!< 版本 1 */
+    SystemControl(1)            /*!< 版本 1 */
+}
